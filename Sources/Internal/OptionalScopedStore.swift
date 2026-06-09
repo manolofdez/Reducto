@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Manuel Fernandez. All rights reserved.
 
 import Foundation
+import os.log
 
 /// A store derived from a parent store, focused on an optional sub-state via a key path.
 /// Reads reflect the current parent state when present, or the last known state as a fallback.
@@ -19,6 +20,13 @@ where ChildFeature.State: Equatable {
         get { parentStore.state[keyPath: toChildKeyPath] ?? lastKnownState }
         set {
             lastKnownState = newValue
+            guard parentStore.state[keyPath: toChildKeyPath] != nil else {
+                LogUtils.showLog(
+                    message: "State update ignored: optional state is nil, cannot apply mutation",
+                    category: "OptionalScopedStore"
+                )
+                return
+            }
             parentStore.state[keyPath: toChildKeyPath] = newValue
         }
     }
@@ -44,9 +52,14 @@ where ChildFeature.State: Equatable {
     }
 
     func apply(_ reduce: (ChildFeature, inout ChildFeature.State) -> ChildFeature.Event?) {
-        guard parentStore.state[keyPath: toChildKeyPath] != nil else { return }
+        guard var state = parentStore.state[keyPath: toChildKeyPath] else {
+            LogUtils.showLog(
+                message: "Action ignored: can't apply an action without a state",
+                category: "OptionalScopedStore"
+            )
+            return
+        }
 
-        var state = self.state
         let event = reduce(feature, &state)
 
         parentStore.state[keyPath: toChildKeyPath] = state
