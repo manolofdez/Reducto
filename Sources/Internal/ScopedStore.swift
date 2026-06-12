@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Manuel Fernandez. All rights reserved.
 
+import Combine
 import Foundation
 
 /// A store derived from a parent store, focused on a sub-state via a key path.
@@ -19,6 +20,8 @@ where ChildFeature.State: Equatable {
         set { parentStore.state[keyPath: toChildKeyPath] = newValue }
     }
 
+    let publisher: AnyPublisher<ChildFeature.State, Never>
+    
     private let parentStore: any InternalStoring<ParentFeature>
     private let toChildKeyPath: WritableKeyPath<ParentFeature.State, ChildFeature.State>
     private let feature: ChildFeature
@@ -34,6 +37,9 @@ where ChildFeature.State: Equatable {
         self.toChildKeyPath = toChildKeyPath
         self.feature = feature()
         self.onEvent = onEvent
+        self.publisher = parentStore.publisher
+            .map { $0[keyPath: toChildKeyPath] }
+            .eraseToAnyPublisher()
     }
 
     func apply(_ reduce: (ChildFeature, inout ChildFeature.State) -> ChildFeature.Event?) {

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Manuel Fernandez. All rights reserved.
 
+import Combine
 import Foundation
 import os.log
 
@@ -30,6 +31,8 @@ where ChildFeature.State: Equatable {
             parentStore.state[keyPath: toChildKeyPath] = newValue
         }
     }
+    
+    let publisher: AnyPublisher<ChildFeature.State, Never>
 
     private let parentStore: any InternalStoring<ParentFeature>
     private let toChildKeyPath: WritableKeyPath<ParentFeature.State, ChildFeature.State?>
@@ -49,6 +52,9 @@ where ChildFeature.State: Equatable {
         self.lastKnownState = initialState
         self.feature = feature()
         self.onEvent = onEvent
+        self.publisher = parentStore.publisher
+            .map { $0[keyPath: toChildKeyPath] ?? initialState }
+            .eraseToAnyPublisher()
     }
 
     func apply(_ reduce: (ChildFeature, inout ChildFeature.State) -> ChildFeature.Event?) {

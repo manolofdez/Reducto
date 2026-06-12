@@ -2,6 +2,7 @@
 
 import Foundation
 import os.log
+import Combine
 
 @MainActor
 @dynamicMemberLookup
@@ -112,5 +113,15 @@ public final class Store<StoreFeature: Feature> {
         scopeCache.setObject(child, forKey: keyPath)
 
         return child
+    }
+    
+    /// Returns a Combine publisher that emits the current value at `keyPath` and every subsequent change.
+    public func publisher<Value: Equatable>(
+        for keyPath: KeyPath<StoreFeature.State, Value>
+    ) -> AnyPublisher<Value, Never> {
+        wrappedStore.publisher
+            .map { $0[keyPath: keyPath] }
+            .removeDuplicates()
+            .eraseToAnyPublisher()
     }
 }
