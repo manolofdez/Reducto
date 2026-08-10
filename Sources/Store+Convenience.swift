@@ -11,14 +11,17 @@ extension Store {
         }
     }
 
-    /// Asynchronously performs work without applying a state mutation.
-    @discardableResult
+    /// Asynchronously performs work that can apply multiple state mutations via the provided callback.
+    /// Convenience for features with `Never` events — the callback does not require returning an event.
     public func apply(
-        _ apply: @escaping (StoreFeature, StoreFeature.State) async -> Void
-    ) -> Task<Void, Never> where StoreFeature.Event == Never {
-        self.apply { feature, state in
-            await apply(feature, state)
-            return nil
+        id: some Hashable = UUID(),
+        _ work: @escaping (StoreFeature, @escaping ((inout StoreFeature.State) -> Void) -> Void) async -> Void
+    ) where StoreFeature.Event == Never {
+        self.apply(id: id) { feature, apply in
+            let simpleApply: ((inout StoreFeature.State) -> Void) -> Void = { stateChange in
+                apply { state in stateChange(&state); return nil }
+            }
+            await work(feature, simpleApply)
         }
     }
 

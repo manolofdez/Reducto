@@ -29,7 +29,10 @@ struct StoreScopeTests {
         let childStore: Store<LabelReducer> = store.scope(
             \.label,
             feature: { LabelReducer() },
-            onEvent: { _, _, _ in onEventCallCount += 1; return nil }
+            onEvent: { _, _, _ in
+                onEventCallCount += 1
+                return nil
+            }
         )
 
         childStore.apply { feature, state -> LabelReducer.Event? in
@@ -48,7 +51,10 @@ struct StoreScopeTests {
         let childStore: Store<LabelReducer> = store.scope(
             \.label,
             feature: { LabelReducer() },
-            onEvent: { event, _, _ in receivedEvent = event; return nil }
+            onEvent: { event, _, _ in
+                receivedEvent = event
+                return nil
+            }
         )
 
         childStore.apply { feature, state -> LabelReducer.Event? in
@@ -93,7 +99,10 @@ struct StoreScopeTests {
         let childStore: Store<LabelReducer> = store.scope(
             \.label,
             feature: { LabelReducer() },
-            onEvent: { _, _, _ in onEventCallCount += 1; return nil }
+            onEvent: { _, _, _ in
+                onEventCallCount += 1
+                return nil
+            }
         )
 
         childStore.apply { feature, state -> LabelReducer.Event? in
@@ -145,7 +154,7 @@ struct StoreScopeTests {
         let store = Store<AppReducer>(state: .init(counter: .init(count: 0)))
         let childStore: Store<CounterReducer> = store.scope(\.counter)
 
-        store.apply { _, state in state.counter.count = 42; return nil }
+        store.apply { _, state in state.counter.count = 42 }
 
         #expect(childStore.count == 42)
     }

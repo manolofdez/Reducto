@@ -8,7 +8,6 @@ import Foundation
 @Observable
 final class ScopedStore<ParentFeature: Feature, ChildFeature: Feature>: InternalStoring
 where ChildFeature.State: Equatable {
-    typealias DeferredStateMutation = (inout ChildFeature.State) -> ChildFeature.Event?
     typealias EventHandler = (
         _ childEvent: ChildFeature.Event,
         _ parentFeature: ParentFeature,
@@ -21,10 +20,10 @@ where ChildFeature.State: Equatable {
     }
 
     let publisher: AnyPublisher<ChildFeature.State, Never>
+    let feature: ChildFeature
     
     private let parentStore: any InternalStoring<ParentFeature>
     private let toChildKeyPath: WritableKeyPath<ParentFeature.State, ChildFeature.State>
-    private let feature: ChildFeature
     private let onEvent: EventHandler
 
     init(
@@ -54,22 +53,4 @@ where ChildFeature.State: Equatable {
             onEvent(event, parentFeature, &parentState)
         }
     }
-
-    func apply(_ apply: @escaping (ChildFeature, ChildFeature.State) async -> DeferredStateMutation?) -> Task<Void, Never> {
-        Task { @MainActor in
-            guard let mutation = await apply(self.feature, self.state) else { return }
-
-            var state = self.state
-            let event = mutation(&state)
-
-            self.parentStore.state[keyPath: self.toChildKeyPath] = state
-
-            guard let event else { return }
-
-            self.parentStore.apply { parentFeature, parentState in
-                self.onEvent(event, parentFeature, &parentState)
-            }
-        }
-    }
-
 }

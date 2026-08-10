@@ -54,7 +54,10 @@ struct StoreOptionalScopeTests {
         let childStore: Store<LabelReducer>? = store.scope(
             \.label,
             feature: { LabelReducer() },
-            onEvent: { _, _, _ in onEventCallCount += 1; return nil }
+            onEvent: { _, _, _ in
+                onEventCallCount += 1
+                return nil
+            }
         )
 
         childStore!.apply { feature, state -> LabelReducer.Event? in
@@ -73,7 +76,10 @@ struct StoreOptionalScopeTests {
         let childStore: Store<LabelReducer>? = store.scope(
             \.label,
             feature: { LabelReducer() },
-            onEvent: { event, _, _ in receivedEvent = event; return nil }
+            onEvent: { event, _, _ in
+                receivedEvent = event
+                return nil
+            }
         )
 
         childStore!.apply { feature, state -> LabelReducer.Event? in
@@ -125,11 +131,11 @@ struct StoreOptionalScopeTests {
         let store = Store<AppReducerWithOptional>(state: .init(counter: .init(count: 5)))
         let firstStore: Store<CounterReducer> = store.scope(\.counter)!
 
-        store.apply { _, state in state.counter = nil; return nil }
+        store.apply { _, state in state.counter = nil }
         let nilResult: Store<CounterReducer>? = store.scope(\.counter)
         #expect(nilResult == nil)
 
-        store.apply { _, state in state.counter = .init(count: 77); return nil }
+        store.apply { _, state in state.counter = .init(count: 77) }
         let secondStore: Store<CounterReducer> = store.scope(\.counter)!
 
         #expect(firstStore !== secondStore)
@@ -142,13 +148,14 @@ struct StoreOptionalScopeTests {
         let store = Store<AppReducerWithOptional>(state: .init(counter: .init(count: 0)))
         let childStore: Store<CounterReducer> = store.scope(\.counter)!
 
-        let task = childStore.apply { feature, _ -> Store<CounterReducer>.DeferredStateMutation? in
-            return { state in
-                feature.set(count: 55, in: &state)
-                return nil
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            childStore.apply { feature, apply in
+                apply { state in
+                    feature.set(count: 55, in: &state)
+                }
+                continuation.resume()
             }
         }
-        _ = await task.value
 
         #expect(store.counter?.count == 55)
     }
@@ -157,20 +164,21 @@ struct StoreOptionalScopeTests {
         let store = Store<AppReducerWithOptional>(state: .init(counter: .init(count: 0)))
         let childStore: Store<CounterReducer> = store.scope(\.counter)!
 
-        let (stream, continuation) = AsyncStream<Void>.makeStream()
+        let (stream, streamContinuation) = AsyncStream<Void>.makeStream()
 
-        let task = childStore.apply { _, _ -> Store<CounterReducer>.DeferredStateMutation? in
-            for await _ in stream { break }
-            return { state in
-                state.count = 99
-                return nil
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            childStore.apply { _, apply in
+                for await _ in stream { break }
+                apply { state in
+                    state.count = 99
+                }
+                continuation.resume()
             }
+
+            store.apply { _, state in state.counter = nil }
+
+            streamContinuation.finish()
         }
-
-        store.apply { _, state in state.counter = nil; return nil }
-
-        continuation.finish()
-        _ = await task.value
 
         #expect(store.counter == nil)
     }

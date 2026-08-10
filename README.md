@@ -26,7 +26,7 @@ Before we go any further, let's make sure we're on the same page:
 
 - **Scope** — the mechanism for composing stores. A parent store produces a child `Store` focused on a sub-slice of the parent's state, via a keypath. The child reads from and writes to the parent automatically.
 
-- **apply** — how you mutate state. You pass a closure to `store.apply`, which receives the feature and an `inout` reference to state. It can mutate state synchronously or kick off async work and apply the result later.
+- **apply** — how you mutate state. You pass a closure to `store.apply`, which receives the feature and either an `inout` reference to state (synchronous) or a callback for applying updates as async work completes — call it zero, one, or many times.
 
 ---
 
@@ -53,11 +53,12 @@ struct CounterFeature: Feature, EmptyInitializing {
     	state.count += 1 
     }
 
-    func fetchLabel() async -> (inout State) -> Void {
-        let newLabel = await labelService.fetchLabel()
-        return { state in 
-            state.label = newLabel 
-        }
+    func set(label: String, in state: inout State) {
+        state.label = label
+    }
+
+    func fetchLabel() async -> String {
+        await labelService.fetchLabel()
     }
 }
 ```
@@ -83,14 +84,72 @@ Mutations happen by calling `apply` on the store. The closure always receives th
 store.apply { feature, state in
     feature.increment(&state)
 }
+```
 
-// Async work → deferred state update
-store.apply { feature, _ in
-    await feature.fetchLabel()
+For async work, `apply` hands your closure a second argument instead of a plain `state` — a callback you call whenever you have a mutation ready. Call it zero times, once, or several times; each call takes effect immediately, against whatever the current state is at that moment.
+
+```swift
+// Async work, applied when it's ready
+store.apply { feature, apply in
+    let newLabel = await feature.fetchLabel()
+    apply { state in
+        feature.set(label: newLabel, in: &state)
+    }
 }
 ```
 
-Note the async variants return a `Task` you can `await` if needed, but you can also fire and forget.
+Because you control when `apply` gets called, a single async operation can update state more than once over its lifetime — handy for streaming or paginated work:
+
+```swift
+store.apply { feature, apply in
+    for await page in feature.searchResultPages() {
+        apply { state in
+            feature.append(page, to: &state)
+        }
+    }
+}
+```
+
+If your feature has an `Event` type (see [Child → Parent Communication](#child-parent-communication)), a mutation closure follows the same contract as the synchronous one: return the `Event?` from inside `apply { state in ... }` and it propagates through `onEvent` exactly as it would synchronously.
+
+Async `apply` doesn't return anything to await — it's fire-and-forget by design, tracked internally so it can be cancelled. See [Cancelling Async Work](#cancelling-async-work) below.
+
+<a id="cancelling-async-work"></a>
+### Cancelling Async Work
+
+Every async `apply` call can take an `id`. Registering a new one under an `id` that's already in flight cancels the previous one first — handy for search-as-you-type, where each keystroke should replace the last pending request rather than race it:
+
+```swift
+func search(for query: String) {
+    store.apply(id: "search") { feature, apply in
+        let results = await feature.searchService.search(query)
+        apply { state in
+            feature.set(results: results, in: &state)
+        }
+    }
+}
+```
+
+You can also cancel explicitly:
+
+```swift
+store.cancelAll()                  // cancels every in-flight async apply
+store.cancel(taskID: "search")     // cancels one specific task, by whatever id you gave it
+```
+
+`cancel(taskID:)` takes the same kind of `id` you passed to `apply(id:)` — a `UUID`, a `String`, anything `Hashable`. To cancel a specific task later, pass your own `id` and keep a reference to it. The default `id` (used when you omit it) is generated fresh on every call and never handed back to you, so it's only reachable via `cancelAll()` or by registering another task under the same custom `id`.
+
+Cancellation is cooperative, the same as Swift's own `Task`: once a task is cancelled, the store guarantees any mutation it tries to apply afterward is dropped — even if your closure never checks for cancellation itself. What cancellation does *not* do is interrupt your closure mid-flight. If you want to skip doing further work early, not just discard its result, check `Task.isCancelled` yourself:
+
+```swift
+store.apply(id: "search") { feature, apply in
+    guard !Task.isCancelled else { return }
+    let results = await feature.searchService.search(query)
+    apply { state in
+        feature.set(results: results, in: &state)
+    }
+}
+```
 
 ### Reading State
 
@@ -305,9 +364,9 @@ final class CounterFeatureTests: XCTestCase {
 }
 ```
 
-### Mocking Dependencies in a Reducer
+### Mocking Dependencies in a Feature
 
-The reducer instance is passed into every `send` closure — that's your dependency container. Make dependencies properties of your reducer, and swap them in tests:
+The feature instance is passed into every `apply` closure — that's your dependency container. Make dependencies properties of your feature, and swap them in tests:
 
 ```swift
 struct CounterFeature: Feature {
@@ -319,6 +378,10 @@ struct CounterFeature: Feature {
 
     init(labelService: LabelService = LiveLabelService()) {
         self.labelService = labelService
+    }
+
+    func set(label: String, in state: inout State) {
+        state.label = label
     }
 }
 
@@ -332,14 +395,19 @@ let store = Store(
         }
     )
 
-let task = store.apply { feature, _ in
-    let label = await feature.labelService.fetchLabel()
+// Async apply doesn't return a Task to await, so use an expectation (or any other
+// signal) to wait for it in tests:
+let expectation = expectation(description: "label fetched")
 
-    return { state in
+store.apply { feature, apply in
+    let label = await feature.labelService.fetchLabel()
+    apply { state in
         feature.set(label: label, in: &state)
     }
+    expectation.fulfill()
 }
-await task.value
+
+await fulfillment(of: [expectation])
 
 XCTAssertEqual(store.label, "hello from mock")
 ```

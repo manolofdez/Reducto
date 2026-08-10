@@ -8,10 +8,7 @@ protocol InternalStoring<StoreFeature>: AnyObject {
 
     var state: StoreFeature.State { get set }
     var publisher: AnyPublisher<StoreFeature.State, Never> { get }
+    var feature: StoreFeature { get }
 
     func apply(_ reduce: (StoreFeature, inout StoreFeature.State) -> StoreFeature.Event?)
-
-    func apply(
-        _ apply: @escaping (StoreFeature, StoreFeature.State) async -> ((inout StoreFeature.State) -> StoreFeature.Event?)?
-    ) -> Task<Void, Never>
 }

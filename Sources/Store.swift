@@ -7,7 +7,7 @@ import Combine
 @MainActor
 @dynamicMemberLookup
 public final class Store<StoreFeature: Feature> {
-    public typealias DeferredStateMutation = (inout StoreFeature.State) -> StoreFeature.Event?
+    public typealias StateUpdateBlock = (inout StoreFeature.State) -> StoreFeature.Event?
     public typealias ChildEventHandler<ChildFeature: Feature> = (
         _ childEvent: ChildFeature.Event,
         _ parentFeature: StoreFeature,
@@ -15,6 +15,7 @@ public final class Store<StoreFeature: Feature> {
     ) -> StoreFeature.Event?
 
     private let wrappedStore: any InternalStoring<StoreFeature>
+    private let taskCancellationBag = TaskCancellationBag()
 
     // NSMapTable is used instead of [AnyKeyPath: Weak<AnyObject>] because weak values are automatically
     // removed when the child store deallocates — avoiding stale key accumulation.
@@ -50,12 +51,55 @@ public final class Store<StoreFeature: Feature> {
         wrappedStore.apply(reduce)
     }
 
-    /// Asynchronously performs work, then applies a mutation to the state.
-    @discardableResult
+    /// Asynchronously performs work that can apply multiple state mutations via the provided callback.
     public func apply(
-        _ apply: @escaping (StoreFeature, StoreFeature.State) async -> DeferredStateMutation?
-    ) -> Task<Void, Never> {
-        wrappedStore.apply(apply)
+        id: some Hashable = UUID(),
+        _ reduce: @escaping (StoreFeature, @escaping (StateUpdateBlock) -> Void) async -> Void
+    ) {
+        let token = AsyncApplyToken()
+        let task = Task { @MainActor [weak self] in
+            defer { token.invalidate() }
+
+            guard let self else { return }
+
+            let apply: (StateUpdateBlock) -> Void = { [weak self, token] updateState in
+                guard token.isValid else {
+                    LogUtils.showLog(
+                        message: "Cannot perform state mutations after the apply function has completed",
+                        category: "Store"
+                    )
+                    return
+                }
+
+                guard !Task.isCancelled else {
+                    LogUtils.showLog(
+                        message: "Cannot perform state mutations after the task has been cancelled",
+                        category: "Store"
+                    )
+                    return
+                }
+
+                guard let self else { return }
+
+                self.wrappedStore.apply { _, state in
+                    return updateState(&state)
+                }
+            }
+            
+            await reduce(self.wrappedStore.feature, apply)
+        }
+        
+        taskCancellationBag.store(id: id, task)
+    }
+
+    /// Cancels all tasks started via the async apply with callback.
+    public func cancelAll() {
+        taskCancellationBag.cancelAll()
+    }
+
+    /// Cancels a specific task by its registered ID.
+    public func cancel(taskID: some Hashable) {
+        taskCancellationBag.cancel(id: taskID)
     }
 
     /// Returns a child store scoped to a sub-state of the current store, forwarding child events through the `onEvent` closure.
