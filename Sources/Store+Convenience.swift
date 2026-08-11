@@ -11,20 +11,6 @@ extension Store {
         }
     }
 
-    /// Asynchronously performs work that can apply multiple state mutations via the provided callback.
-    /// Convenience for features with `Never` events — the callback does not require returning an event.
-    public func apply(
-        id: some Hashable = UUID(),
-        _ work: @escaping (StoreFeature, @escaping ((inout StoreFeature.State) -> Void) -> Void) async -> Void
-    ) where StoreFeature.Event == Never {
-        self.apply(id: id) { feature, apply in
-            let simpleApply: ((inout StoreFeature.State) -> Void) -> Void = { stateChange in
-                apply { state in stateChange(&state); return nil }
-            }
-            await work(feature, simpleApply)
-        }
-    }
-
     /// Returns a child store scoped to a sub-state with no event handling (for features with `Never` events).
     public func scope<ChildFeature: Feature>(
         _ keyPath: WritableKeyPath<StoreFeature.State, ChildFeature.State>,

@@ -20,13 +20,15 @@ Before we go any further, let's make sure we're on the same page:
 
 - **State** — a value type (usually a `struct`) that represents the current snapshot of a feature. All UI is derived from state. All mutations go through the store.
 
-- **Store** — the live, running instance of a feature. It holds the current `State`, owns a `Feature`, and is the only thing that can mutate state. You read from it, `apply` into it, and pass it to views.
+- **Store** — the live, running instance of a feature. It holds the current `State`, owns a `Feature`, owns a `TaskManager`, and is the only thing that can mutate state. You read from it, `apply` into it, and pass it to views.
 
 - **Event** — something a child feature wants to tell its parent. Events go *out* — up the tree. A child returns an `Event` from an `apply` closure; the parent handles it in the `onEvent` closure passed to `scope`.
 
 - **Scope** — the mechanism for composing stores. A parent store produces a child `Store` focused on a sub-slice of the parent's state, via a keypath. The child reads from and writes to the parent automatically.
 
-- **apply** — how you mutate state. You pass a closure to `store.apply`, which receives the feature and either an `inout` reference to state (synchronous) or a callback for applying updates as async work completes — call it zero, one, or many times.
+- **apply** — how you synchronously mutate state. You pass a closure to `store.apply`, which receives the feature and an `inout` reference to state.
+
+- **TaskManager** — how you run async, multi-step work. Access one via `store.task { feature, taskManager in ... }`, then hand `taskManager.run` a closure; it receives a callback for applying mutations as your work completes — call it zero, one, or many times. It also owns cancellation for that work.
 
 ---
 
@@ -86,25 +88,29 @@ store.apply { feature, state in
 }
 ```
 
-For async work, `apply` hands your closure a second argument instead of a plain `state` — a callback you call whenever you have a mutation ready. Call it zero times, once, or several times; each call takes effect immediately, against whatever the current state is at that moment.
+For async work, use `store.task` instead. It hands you the feature and a `TaskManager`; call `taskManager.run` with a closure that receives a callback for applying mutations as your work completes. Call it zero times, once, or several times; each call takes effect immediately, against whatever the current state is at that moment.
 
 ```swift
 // Async work, applied when it's ready
-store.apply { feature, apply in
-    let newLabel = await feature.fetchLabel()
-    apply { state in
-        feature.set(label: newLabel, in: &state)
+store.task { feature, taskManager in
+    taskManager.run { apply in
+        let newLabel = await feature.fetchLabel()
+        apply { state in
+            feature.set(label: newLabel, in: &state)
+        }
     }
 }
 ```
 
-Because you control when `apply` gets called, a single async operation can update state more than once over its lifetime — handy for streaming or paginated work:
+Because you control when `apply` gets called, a single task can update state more than once over its lifetime — handy for streaming or paginated work:
 
 ```swift
-store.apply { feature, apply in
-    for await page in feature.searchResultPages() {
-        apply { state in
-            feature.append(page, to: &state)
+store.task { feature, taskManager in
+    taskManager.run { apply in
+        for await page in feature.searchResultPages() {
+            apply { state in
+                feature.append(page, to: &state)
+            }
         }
     }
 }
@@ -112,19 +118,21 @@ store.apply { feature, apply in
 
 If your feature has an `Event` type (see [Child → Parent Communication](#child-parent-communication)), a mutation closure follows the same contract as the synchronous one: return the `Event?` from inside `apply { state in ... }` and it propagates through `onEvent` exactly as it would synchronously.
 
-Async `apply` doesn't return anything to await — it's fire-and-forget by design, tracked internally so it can be cancelled. See [Cancelling Async Work](#cancelling-async-work) below.
+`taskManager.run` doesn't return anything to await — it's fire-and-forget by design, tracked internally so it can be cancelled. See [Task Management](#task-management) below.
 
-<a id="cancelling-async-work"></a>
-### Cancelling Async Work
+<a id="task-management"></a>
+### Task Management
 
-Every async `apply` call can take an `id`. Registering a new one under an `id` that's already in flight cancels the previous one first — handy for search-as-you-type, where each keystroke should replace the last pending request rather than race it:
+Every `run` call can take an `id`. Registering a new one under an `id` that's already in flight cancels the previous one first — handy for search-as-you-type, where each keystroke should replace the last pending request rather than race it:
 
 ```swift
 func search(for query: String) {
-    store.apply(id: "search") { feature, apply in
-        let results = await feature.searchService.search(query)
-        apply { state in
-            feature.set(results: results, in: &state)
+    store.task { feature, taskManager in
+        taskManager.run(id: "search") { apply in
+            let results = await feature.searchService.search(query)
+            apply { state in
+                feature.set(results: results, in: &state)
+            }
         }
     }
 }
@@ -133,20 +141,24 @@ func search(for query: String) {
 You can also cancel explicitly:
 
 ```swift
-store.cancelAll()                  // cancels every in-flight async apply
-store.cancel(taskID: "search")     // cancels one specific task, by whatever id you gave it
+store.task { _, taskManager in
+    taskManager.cancelAll()                  // cancels every in-flight task
+    taskManager.cancel(taskID: "search")     // cancels one specific task, by whatever id you gave it
+}
 ```
 
-`cancel(taskID:)` takes the same kind of `id` you passed to `apply(id:)` — a `UUID`, a `String`, anything `Hashable`. To cancel a specific task later, pass your own `id` and keep a reference to it. The default `id` (used when you omit it) is generated fresh on every call and never handed back to you, so it's only reachable via `cancelAll()` or by registering another task under the same custom `id`.
+`cancel(taskID:)` takes the same kind of `id` you passed to `run(id:)` — a `UUID`, a `String`, anything `Hashable`. To cancel a specific task later, pass your own `id` and keep a reference to it. The default `id` (used when you omit it) is generated fresh on every call and never handed back to you, so it's only reachable via `cancelAll()` or by registering another task under the same custom `id`.
 
-Cancellation is cooperative, the same as Swift's own `Task`: once a task is cancelled, the store guarantees any mutation it tries to apply afterward is dropped — even if your closure never checks for cancellation itself. What cancellation does *not* do is interrupt your closure mid-flight. If you want to skip doing further work early, not just discard its result, check `Task.isCancelled` yourself:
+Cancellation is cooperative, the same as Swift's own `Task`: once a task is cancelled, the task manager guarantees any mutation it tries to apply afterward is dropped — even if your closure never checks for cancellation itself. What cancellation does *not* do is interrupt your closure mid-flight. If you want to skip doing further work early, not just discard its result, check `Task.isCancelled` yourself:
 
 ```swift
-store.apply(id: "search") { feature, apply in
-    guard !Task.isCancelled else { return }
-    let results = await feature.searchService.search(query)
-    apply { state in
-        feature.set(results: results, in: &state)
+store.task { feature, taskManager in
+    taskManager.run(id: "search") { apply in
+        guard !Task.isCancelled else { return }
+        let results = await feature.searchService.search(query)
+        apply { state in
+            feature.set(results: results, in: &state)
+        }
     }
 }
 ```
@@ -395,16 +407,18 @@ let store = Store(
         }
     )
 
-// Async apply doesn't return a Task to await, so use an expectation (or any other
+// taskManager.run doesn't return a Task to await, so use an expectation (or any other
 // signal) to wait for it in tests:
 let expectation = expectation(description: "label fetched")
 
-store.apply { feature, apply in
-    let label = await feature.labelService.fetchLabel()
-    apply { state in
-        feature.set(label: label, in: &state)
+store.task { feature, taskManager in
+    taskManager.run { apply in
+        let label = await feature.labelService.fetchLabel()
+        apply { state in
+            feature.set(label: label, in: &state)
+        }
+        expectation.fulfill()
     }
-    expectation.fulfill()
 }
 
 await fulfillment(of: [expectation])

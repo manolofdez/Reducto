@@ -17,7 +17,8 @@ let package = Package(
     targets: [
         .target(
             name: "Reducto",
-            dependencies: []
+            dependencies: [],
+            swiftSettings: [.enableUpcomingFeature("NonisolatedNonsendingByDefault")]
         ),
         .testTarget(
             name: "ReductoTests",

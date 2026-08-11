@@ -144,35 +144,39 @@ struct StoreOptionalScopeTests {
 
     // MARK: - Async apply
 
-    @Test func optionalScope_asyncApply_mutatesStateAfterTaskCompletes() async {
+    @Test func optionalScope_taskRun_mutatesStateAfterTaskCompletes() async {
         let store = Store<AppReducerWithOptional>(state: .init(counter: .init(count: 0)))
         let childStore: Store<CounterReducer> = store.scope(\.counter)!
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            childStore.apply { feature, apply in
-                apply { state in
-                    feature.set(count: 55, in: &state)
+            childStore.task { feature, taskManager in
+                taskManager.run { apply in
+                    apply { state in
+                        feature.set(count: 55, in: &state)
+                    }
+                    continuation.resume()
                 }
-                continuation.resume()
             }
         }
 
         #expect(store.counter?.count == 55)
     }
 
-    @Test func optionalScope_asyncApply_dropsWritebackWhenOptionalBecomesNilAfterAwait() async {
+    @Test func optionalScope_taskRun_dropsWritebackWhenOptionalBecomesNilAfterAwait() async {
         let store = Store<AppReducerWithOptional>(state: .init(counter: .init(count: 0)))
         let childStore: Store<CounterReducer> = store.scope(\.counter)!
 
         let (stream, streamContinuation) = AsyncStream<Void>.makeStream()
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            childStore.apply { _, apply in
-                for await _ in stream { break }
-                apply { state in
-                    state.count = 99
+            childStore.task { _, taskManager in
+                taskManager.run { apply in
+                    for await _ in stream { break }
+                    apply { state in
+                        state.count = 99
+                    }
+                    continuation.resume()
                 }
-                continuation.resume()
             }
 
             store.apply { _, state in state.counter = nil }
