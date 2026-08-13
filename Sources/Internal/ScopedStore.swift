@@ -20,21 +20,24 @@ where ChildFeature.State: Equatable {
     }
 
     let publisher: AnyPublisher<ChildFeature.State, Never>
-    let feature: ChildFeature
+    
+    @ObservationIgnored
+    private(set) lazy var feature: ChildFeature = createFeature()
     
     private let parentStore: any InternalStoring<ParentFeature>
     private let toChildKeyPath: WritableKeyPath<ParentFeature.State, ChildFeature.State>
     private let onEvent: EventHandler
+    private let createFeature: () -> ChildFeature
 
     init(
         parent parentStore: any InternalStoring<ParentFeature>,
         keyPath toChildKeyPath: WritableKeyPath<ParentFeature.State, ChildFeature.State>,
-        feature: @escaping () -> ChildFeature,
+        feature createFeature: @escaping () -> ChildFeature,
         onEvent: @escaping EventHandler
     ) {
         self.parentStore = parentStore
         self.toChildKeyPath = toChildKeyPath
-        self.feature = feature()
+        self.createFeature = createFeature
         self.onEvent = onEvent
         self.publisher = parentStore.publisher
             .map { $0[keyPath: toChildKeyPath] }
