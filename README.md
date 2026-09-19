@@ -75,7 +75,16 @@ let store = Store(state: CounterFeature.State())
 let store = Store(state: CounterFeature.State(), feature: { CounterFeature() })
 ```
 
-Optionally, a Feature can also define an `Event` type for talking to its parent. See [Child → Parent Communication](#child-parent-communication).
+Optionally, a Feature can also define an `Event` type for talking to its parent. See [Child → Parent Communication](#child-parent-communication). Such a feature can still be a root — pass an `onEvent` closure and the store handles its events in place:
+
+```swift
+let store = Store(
+    state: LabelFeature.State(),
+    onEvent: { event, feature, state in
+        feature.handleEvent(event, state: &state)
+    }
+)
+```
 
 ### Applying
 
@@ -316,6 +325,29 @@ counterStore.apply { feature, state in
     feature.increment(&state)
 }
 ```
+
+#### Events at the root
+
+A feature that emits events can be hosted as a root — useful when a reusable screen module is driven standalone in an app entry point, a preview, or a test. There is no parent to bubble to, so the store handles the events itself via `onEvent`:
+
+```swift
+let appStore = Store(state: AppFeature.State()) { event, feature, state in
+    switch event {
+    case .limitExceeded:
+        feature.handleLimitExceeded(&state)
+    }
+}
+
+// Child events still bubble up and land here.
+let counterStore = appStore.scope(\.counter) { event, feature, appState in
+    switch event {
+    case .limitReached(let count):
+        return feature.handleLimitReached(count, state: &appState)
+    }
+}
+```
+
+Unlike a child's `onEvent`, the root handler returns `Void` — the chain ends there. Mutations it makes to `state` land in the same transaction as the mutation that produced the event, so subscribers see a single update.
 
 ### Combine / Publisher
 

@@ -13,6 +13,12 @@ public final class Store<StoreFeature: Feature> {
         _ parentState: inout StoreFeature.State
     ) -> StoreFeature.Event?
     
+    public typealias RootEventHandler = (
+        _ event: StoreFeature.Event,
+        _ feature: StoreFeature,
+        _ state: inout StoreFeature.State
+    ) -> Void
+
     private let taskManager: TaskManager<StoreFeature>
     private let wrappedStore: any InternalStoring<StoreFeature>
 
@@ -31,6 +37,22 @@ public final class Store<StoreFeature: Feature> {
         feature: @escaping () -> StoreFeature
     ) where StoreFeature.Event == Never {
         self.init(wrappedStore: RootStore(initialState: state, feature: feature))
+    }
+
+    /// Creates a store with the given initial state for the given feature, handling the events it emits.
+    @_disfavoredOverload
+    public convenience init(
+        state: StoreFeature.State,
+        feature: @escaping () -> StoreFeature,
+        onEvent: @escaping RootEventHandler
+    ) {
+        self.init(
+            wrappedStore: EventHandlingRootStore(
+                initialState: state,
+                feature: feature,
+                onEvent: onEvent
+            )
+        )
     }
 
     init(wrappedStore: some InternalStoring<StoreFeature>) {

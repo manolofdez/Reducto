@@ -309,7 +309,7 @@ struct TaskManagerTests {
         )
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            childStore.withTaskManager { feature, taskManager in
+            childStore.task { feature, taskManager in
                 taskManager.run { apply in
                     apply { state in
                         feature.set(label: "async", in: &state)

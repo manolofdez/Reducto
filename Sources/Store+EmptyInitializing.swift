@@ -7,6 +7,11 @@ extension Store where StoreFeature: EmptyInitializing {
     public convenience init(state: StoreFeature.State) where StoreFeature.Event == Never {
         self.init(state: state, feature: { StoreFeature() })
     }
+
+    /// Creates a root store using the feature's default initializer.
+    public convenience init(state: StoreFeature.State, onEvent: @escaping RootEventHandler) {
+        self.init(state: state, feature: { StoreFeature() }, onEvent: onEvent)
+    }
 }
 
 extension Store {
