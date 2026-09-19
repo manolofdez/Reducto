@@ -10,12 +10,6 @@ import os.log
 @Observable
 final class OptionalScopedStore<ParentFeature: Feature, ChildFeature: Feature>: InternalStoring
 where ChildFeature.State: Equatable {
-    typealias EventHandler = (
-        _ childEvent: ChildFeature.Event,
-        _ parentFeature: ParentFeature,
-        _ parentState: inout ParentFeature.State
-    ) -> ParentFeature.Event?
-
     var state: ChildFeature.State {
         get { parentStore.state[keyPath: toChildKeyPath] ?? lastKnownState }
         set {
@@ -37,14 +31,14 @@ where ChildFeature.State: Equatable {
     private let parentStore: any InternalStoring<ParentFeature>
     private let toChildKeyPath: WritableKeyPath<ParentFeature.State, ChildFeature.State?>
     private var lastKnownState: ChildFeature.State
-    private let onEvent: EventHandler
+    private let onEvent: ChildEventHandler<ParentFeature, ChildFeature>
 
     init(
         parent parentStore: any InternalStoring<ParentFeature>,
         keyPath toChildKeyPath: WritableKeyPath<ParentFeature.State, ChildFeature.State?>,
         initialState: ChildFeature.State,
         feature: @escaping () -> ChildFeature,
-        onEvent: @escaping EventHandler
+        onEvent: @escaping ChildEventHandler<ParentFeature, ChildFeature>
     ) {
         self.parentStore = parentStore
         self.toChildKeyPath = toChildKeyPath
