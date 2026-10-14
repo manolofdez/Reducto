@@ -117,6 +117,41 @@ struct StoreOptionalScopeTests {
         #expect(store.extra == "received: ping")
     }
 
+    // MARK: - Teardown
+
+    @Test func optionalScope_whenChildBecomesNil_publisherDoesNotEmitInitialState() {
+        let store = Store<AppReducerWithOptional>(state: .init(counter: .init(count: 0)))
+        let childStore: Store<CounterReducer> = store.scope(\.counter)!
+        var received: [Int] = []
+        let cancellable = childStore.publisher(for: \.count).sink { received.append($0) }
+
+        childStore.apply { feature, state in feature.set(count: 5, in: &state) }
+        store.apply { _, state in state.counter = nil }
+
+        #expect(received == [0, 5])
+        _ = cancellable
+    }
+
+    @Test func optionalScope_whenChildBecomesNil_readsReturnLastState() {
+        let store = Store<AppReducerWithOptional>(state: .init(counter: .init(count: 0)))
+        let childStore: Store<CounterReducer> = store.scope(\.counter)!
+
+        childStore.apply { feature, state in feature.set(count: 5, in: &state) }
+        store.apply { _, state in state.counter = nil }
+
+        #expect(childStore.count == 5)
+    }
+
+    @Test func optionalScope_whenParentMutatesChildThenNils_readsReturnLastState() {
+        let store = Store<AppReducerWithOptional>(state: .init(counter: .init(count: 0)))
+        let childStore: Store<CounterReducer> = store.scope(\.counter)!
+
+        store.apply { _, state in state.counter?.count = 7 }
+        store.apply { _, state in state.counter = nil }
+
+        #expect(childStore.count == 7)
+    }
+
     // MARK: - Caching
 
     @Test func optionalScope_cachingReturnsSameInstanceForSameKeyPath() {
