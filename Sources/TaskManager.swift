@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Manuel Fernandez. All rights reserved.
 
+import Combine
 import Foundation
 
 @MainActor
@@ -18,7 +19,7 @@ public final class TaskManager<StoreFeature: Feature> {
     public var state: StoreFeature.State {
         store.state
     }
-    
+
     private let store: any InternalStoring<StoreFeature>
     private let cancellationBag = TaskCancellationBag()
     
@@ -68,6 +69,16 @@ public final class TaskManager<StoreFeature: Feature> {
         cancellationBag.store(id: id, task)
     }
     
+    /// Returns a Combine publisher that emits the current value at `keyPath` and every subsequent change.
+    public func publisher<Value: Equatable>(
+        for keyPath: KeyPath<StoreFeature.State, Value>
+    ) -> AnyPublisher<Value, Never> {
+        store.publisher
+            .map { $0[keyPath: keyPath] }
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+
     /// Cancels all tasks started via the async apply with callback.
     public func cancelAll() {
         cancellationBag.cancelAll()

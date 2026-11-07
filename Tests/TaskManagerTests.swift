@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Manuel Fernandez. All rights reserved.
 
+import Combine
 import Foundation
 import Testing
 import Reducto
@@ -271,6 +272,98 @@ struct TaskManagerTests {
 
         #expect(firstLoopEnded == true)
         #expect(store.count == 2)
+    }
+
+    // MARK: - Publisher
+
+    @Test func publisher_emitsCurrentValueImmediatelyOnSubscription() {
+        let store = Store<CounterReducer>(state: .init(count: 42))
+        var received: [Int] = []
+        var cancellable: AnyCancellable?
+
+        store.task { _, taskManager in
+            cancellable = taskManager.publisher(for: \.count).sink { received.append($0) }
+        }
+
+        #expect(received == [42])
+        _ = cancellable
+    }
+
+    @Test func publisher_emitsNewValueAfterApplyInsideRun() async {
+        let store = Store<CounterReducer>(state: .init(count: 0))
+        var received: [Int] = []
+        var cancellable: AnyCancellable?
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            store.task { feature, taskManager in
+                cancellable = taskManager.publisher(for: \.count).sink { received.append($0) }
+                taskManager.run { apply in
+                    apply { state in feature.set(count: 7, in: &state) }
+                    continuation.resume()
+                }
+            }
+        }
+
+        #expect(received == [0, 7])
+        _ = cancellable
+    }
+
+    @Test func publisher_emitsChangesAppliedOutsideTheTask() async {
+        let store = Store<CounterReducer>(state: .init(count: 0))
+        var received: [Int] = []
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            store.task { _, taskManager in
+                taskManager.run { (_: @escaping ((inout CounterReducer.State) -> Void) -> Void) in
+                    for await value in taskManager.publisher(for: \.count).values {
+                        received.append(value)
+                        if value == 5 { break }
+                    }
+                    continuation.resume()
+                }
+            }
+            Task { @MainActor in
+                await Task.yield()
+                store.apply { _, state in state.count = 5 }
+            }
+        }
+
+        #expect(received == [0, 5])
+    }
+
+    @Test func publisher_doesNotReEmitOnUnrelatedMutation() async {
+        let store = Store<AppReducer>(state: .init())
+        var received: [String] = []
+        var cancellable: AnyCancellable?
+
+        store.task { _, taskManager in
+            cancellable = taskManager.publisher(for: \.label.label).sink { received.append($0) }
+        }
+        store.apply { _, state in state.extra = "unrelated" }
+        await Task.yield()
+
+        #expect(received == [""])
+        _ = cancellable
+    }
+
+    @Test func publisher_onScopedChildTaskManager_emitsChildStateChanges() async {
+        let store = Store<AppReducer>(state: .init())
+        let childStore: Store<LabelReducer> = store.scope(
+            \.label,
+            feature: { LabelReducer() },
+            onEvent: { _, _, _ in nil }
+        )
+        var received: [String] = []
+        var cancellable: AnyCancellable?
+
+        childStore.task { _, taskManager in
+            cancellable = taskManager.publisher(for: \.label).sink { received.append($0) }
+        }
+        store.apply { _, state in state.label.label = "parent" }
+        await Task.yield()
+
+        #expect(received == ["", "parent"])
+        _ = cancellable
     }
 
     // MARK: - Convenience overload (Event == Never)

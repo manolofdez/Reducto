@@ -366,6 +366,25 @@ store.publisher(for: \.count)
 
 All the usual Combine operators work.
 
+`TaskManager` vends the same `publisher(for:)`, so async work can react to state changes, including changes made outside the task. Combined with `.values`, a task can wait for state to reach a condition before continuing:
+
+```swift
+store.task { feature, taskManager in
+    taskManager.run(id: "upload") { apply in
+        for await isOnline in taskManager.publisher(for: \.isOnline).values where isOnline {
+            break
+        }
+        guard !Task.isCancelled else { return }
+        let receipt = await feature.uploader.upload()
+        apply { state in
+            feature.set(receipt: receipt, in: &state)
+        }
+    }
+}
+```
+
+If the task is cancelled, the `for await` loop simply ends, so check `Task.isCancelled` afterward when it matters whether the condition was actually met.
+
 ---
 
 ## Testing
